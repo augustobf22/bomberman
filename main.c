@@ -3,37 +3,62 @@
 #define GRID_SIZE 15
 #define TILE_SIZE 60
 #define MAX_BOMBS 10
-#define MAX_ENEMIES 3
+#define MAX_ENEMIES 10
 #define ENEMY_SPEED 2
-#define MAX_WALLS 5
 
 typedef struct{
-    int pos_x, pos_y, bombs_available, bombs_max, bomb_range;
+    int pos_x, pos_y, bombs_available, bombs_max, bomb_range, score;
     bool status; // 0 = dead, 1 = alive
 } PLAYER;
 
 typedef struct{
-    bool indestructible, empty, hasPowerUp, hasExit;
+    bool indestructible, empty, hasPowerUp, hasExit, pendingDestruction;
     Color color;
 } TILE;
 
-typedef struct {
+typedef struct{
     int pos_x, pos_y, timer, range;
     bool isActive, isExploding;
     double lifeTime, explosionTime;
 } BOMB;
 
-typedef struct {
+typedef struct{
     int pos_x, pos_y, dir;
     bool status, isStarted;
     double lastTime, currentTime;
 } ENEMY;
+
+typedef struct{
+    int number;
+    int maxEnemies;
+    int enemySpeed;
+    int maxWalls;
+} LEVEL;
 
 void UpdatePlayerPosition(PLAYER *p, TILE grid[][GRID_SIZE]){
     //grid[15][15], 0 -> 14
     //if new position is empty, go there; else, do nothing
     int pX = p->pos_x / TILE_SIZE;
     int pY = p->pos_y / TILE_SIZE;
+
+    //check for powerup
+    if(grid[pX][pY].hasPowerUp){
+        int type = GetRandomValue(0, 1); //0 = increase range, 1 == increase bombs available
+        if(type == 0){
+            p->bomb_range++;
+        } else {
+            p->bombs_max++;
+            p->bombs_available++;
+        }
+        grid[pX][pY].hasPowerUp = 0;
+        grid[pX][pY].color = WHITE;
+    }
+
+    //check for exit
+    /*if(grid[pX][pY].hasExit){
+        //change level
+        //print level won
+    }*/
 
     //if new position is empty and key pressed is 'a' or <-, go left
     if (grid[pX - 1][pY].empty && (IsKeyPressed(KEY_LEFT) || IsKeyPressed(KEY_A))) p->pos_x = p->pos_x - TILE_SIZE;
@@ -52,8 +77,8 @@ void DrawPlayer(PLAYER p){
     DrawText("P", posX + 15, posY + 10, 35, WHITE);
 }
 
-void UpdateEnemies(ENEMY *e, TILE grid[][GRID_SIZE], BOMB *b, PLAYER *p){
-    for(int i=0; i<MAX_ENEMIES; i++){
+void UpdateEnemies(ENEMY *e, TILE grid[][GRID_SIZE], BOMB *b, PLAYER *p, LEVEL l){
+    for(int i=0; i<l.maxEnemies; i++){
         int pX = e[i].pos_x / TILE_SIZE, pY = e[i].pos_y / TILE_SIZE;
 
         //start enemy in a random position between 5 - 13, keeping a safe starting area for the player
@@ -96,7 +121,7 @@ void UpdateEnemies(ENEMY *e, TILE grid[][GRID_SIZE], BOMB *b, PLAYER *p){
 
             //check for collision with other enemies
             int collided = 0;
-            for(int j=0; j<MAX_ENEMIES; j++) {
+            for(int j=0; j<l.maxEnemies; j++) {
                 if(i != j && e[j].pos_x == new_x && e[j].pos_y == new_y) {
                     collided = 1;
                     break;
@@ -148,7 +173,7 @@ void DrawBomb(BOMB b){
     DrawText(TextFormat("%d", (int) b.lifeTime+1), drawX - 5, drawY - 10, 25, WHITE);
 }
 
-void HandleExplosionsDirection(BOMB *b, PLAYER *p, TILE grid[][GRID_SIZE], int initialX, int initialY, int gridX, int gridY, int dx, int dy, int currentBomb, ENEMY *e){
+void HandleExplosionsDirection(BOMB *b, PLAYER *p, TILE grid[][GRID_SIZE], int initialX, int initialY, int gridX, int gridY, int dx, int dy, int currentBomb, ENEMY *e, LEVEL l){
     for(int r = 1; r <= p->bomb_range; r++){
         int newGridX = gridX + dx*r;
         int newGridY = gridY + dy*r;
@@ -163,11 +188,8 @@ void HandleExplosionsDirection(BOMB *b, PLAYER *p, TILE grid[][GRID_SIZE], int i
         else if(!grid[newGridX][newGridY].empty){
             DrawRectangle(newX, newY, TILE_SIZE, TILE_SIZE, ORANGE);
             DrawRectangleLines(newX, newY, TILE_SIZE, TILE_SIZE, BLACK);
-            grid[newGridX][newGridY].empty = 1;
-            //if its not the exit or powerup, color the tile WHITE
-            if(!grid[newGridX][newGridY].hasExit && !grid[newGridX][newGridY].hasPowerUp){
-                grid[newGridX][newGridY].color = WHITE;
-            }
+
+            grid[newGridX][newGridY].pendingDestruction = 1;
             break;
         }
         //others cases are blank tiles
@@ -177,11 +199,11 @@ void HandleExplosionsDirection(BOMB *b, PLAYER *p, TILE grid[][GRID_SIZE], int i
             //check if player is hit
             if(p->pos_x == newX && p->pos_y == newY) p->status = 0;
             //check if any enemies were hit
-            for(int i=0; i<MAX_ENEMIES; i++){
+            for(int i=0; i<l.maxEnemies; i++){
                 if(e[i].pos_x == newX && e[i].pos_y == newY) e[i].status = 0;
             }
             //check if any bombs were hit
-            for(int i=0; i<MAX_BOMBS; i++){
+            for(int i=0; i<p->bombs_max; i++){
                 if(i != currentBomb && b[i].isActive && b[i].pos_x == newX && b[i].pos_y == newY)
                 {
                     p->bombs_available++;
@@ -194,8 +216,8 @@ void HandleExplosionsDirection(BOMB *b, PLAYER *p, TILE grid[][GRID_SIZE], int i
     }
 }
 
-void HandleExplosions(PLAYER *p, TILE grid[][GRID_SIZE], BOMB b[], ENEMY e[]){
-    for(int i=0; i<MAX_BOMBS; i++){
+void HandleExplosions(PLAYER *p, TILE grid[][GRID_SIZE], BOMB b[], ENEMY e[], LEVEL l){
+    for(int i=0; i<p->bombs_max; i++){
         if(b[i].isExploding){
             //position = bomb position
             //range = player bomb_range
@@ -212,21 +234,36 @@ void HandleExplosions(PLAYER *p, TILE grid[][GRID_SIZE], BOMB b[], ENEMY e[]){
             if(p->pos_x == initialX && p->pos_y == initialY) p->status = 0;
 
             //up, dy = -1
-            HandleExplosionsDirection(b, p, grid, initialX, initialY, gridX, gridY, 0, -1, i, e);
+            HandleExplosionsDirection(b, p, grid, initialX, initialY, gridX, gridY, 0, -1, i, e, l);
             //down, dy = 1
-            HandleExplosionsDirection(b, p, grid, initialX, initialY, gridX, gridY, 0, 1, i, e);
+            HandleExplosionsDirection(b, p, grid, initialX, initialY, gridX, gridY, 0, 1, i, e, l);
             //right, dx = 1
-            HandleExplosionsDirection(b, p, grid, initialX, initialY, gridX, gridY, 1, 0, i, e);
+            HandleExplosionsDirection(b, p, grid, initialX, initialY, gridX, gridY, 1, 0, i, e, l);
             //left, dx = -1
-            HandleExplosionsDirection(b, p, grid, initialX, initialY, gridX, gridY, -1, 0, i, e);
+            HandleExplosionsDirection(b, p, grid, initialX, initialY, gridX, gridY, -1, 0, i, e, l);
         }
     }
 }
 
-void UpdateBombs(PLAYER *p, BOMB *b){
+void AfterExplosions(TILE grid[][GRID_SIZE]){
+    for(int posX = 0; posX < GRID_SIZE; posX++){
+        for(int posY = 0; posY < GRID_SIZE; posY++){
+            if(grid[posX][posY].pendingDestruction){
+                grid[posX][posY].empty = 1;
+                grid[posX][posY].pendingDestruction = 0;
+                //if its not the exit or powerup, color the tile WHITE
+                if(!grid[posX][posY].hasExit && !grid[posX][posY].hasPowerUp){
+                    grid[posX][posY].color = WHITE;
+                }
+            }
+        }
+    }
+}
+
+void UpdateBombs(PLAYER *p, BOMB *b, TILE grid[][GRID_SIZE]){
     //decrease timers of active bombs
     //when timer is done, set the flag off and increase bombsAvailable
-    for(int i=0; i<MAX_BOMBS; i++){
+    for(int i=0; i<p->bombs_max; i++){
         if(b[i].isActive) {
             b[i].lifeTime -= GetFrameTime();
             if(b[i].lifeTime <= 0){
@@ -240,6 +277,7 @@ void UpdateBombs(PLAYER *p, BOMB *b){
             b[i].explosionTime -= GetFrameTime();
             if(b[i].explosionTime <= 0){
                 b[i].isExploding = 0;
+                AfterExplosions(grid);
             }
         }
     }
@@ -249,7 +287,7 @@ void UpdateBombs(PLAYER *p, BOMB *b){
     //set the flag to 1
     //decrease bombs available
     if(IsKeyPressed(KEY_SPACE) && p->bombs_available > 0){
-        for(int i=0; i<MAX_BOMBS; i++){
+        for(int i=0; i<p->bombs_max; i++){
             if(!b[i].isActive && !b[i].isExploding){
                 b[i].pos_x = p->pos_x;
                 b[i].pos_y = p->pos_y;
@@ -295,6 +333,7 @@ void MakeGrid(TILE grid[][GRID_SIZE]){
                 grid[posX][posY].color = DARKGRAY;
                 grid[posX][posY].hasPowerUp = 0;
                 grid[posX][posY].hasExit = 0;
+                grid[posX][posY].pendingDestruction = 0;
             }
             else
             {
@@ -303,6 +342,7 @@ void MakeGrid(TILE grid[][GRID_SIZE]){
                 grid[posX][posY].color = WHITE;
                 grid[posX][posY].hasPowerUp = 0;
                 grid[posX][posY].hasExit = 0;
+                grid[posX][posY].pendingDestruction = 0;
             }
         }
     }
@@ -334,12 +374,12 @@ void DrawGridCustom(TILE grid[][GRID_SIZE]){
     }
 }
 
-void GenerateWallsAndPowerUp(TILE grid[][GRID_SIZE]){
+void GenerateWallsAndPowerUp(TILE grid[][GRID_SIZE], LEVEL l){
     int posX = 0;
     int posY = 0;
 
     //then, for each wall, choose a random position that's empty
-    for(int w = 0; w < MAX_WALLS; w++){
+    for(int w = 0; w < l.maxWalls; w++){
         //in the remaining iterations, just create walls
         while(!grid[posX][posY].empty){
             posX = GetRandomValue(1, 13);
@@ -356,6 +396,10 @@ void GenerateWallsAndPowerUp(TILE grid[][GRID_SIZE]){
     }
 }
 
+void GenerateInterface(PLAYER p, LEVEL l){
+
+}
+
 int main(void) {
     // Initialization
     //--------------------------------------------------------------------------------------
@@ -366,10 +410,11 @@ int main(void) {
 
     SetTargetFPS(60);               // Set our game to run at 60 frames-per-second
     //--------------------------------------------------------------------------------------
-    PLAYER player1 = {TILE_SIZE, TILE_SIZE, 2, 2, 2, 1};
+    PLAYER player1 = {TILE_SIZE, TILE_SIZE, 2, 2, 2, 0, 1};
+    LEVEL level = {1, 3, 2, 5};
     TILE grid[GRID_SIZE][GRID_SIZE];
     MakeGrid(grid);
-    GenerateWallsAndPowerUp(grid);
+    GenerateWallsAndPowerUp(grid, level);
     BOMB bombs[MAX_BOMBS] = {0};
     ENEMY enemies[MAX_ENEMIES] = {0};
 
@@ -379,8 +424,8 @@ int main(void) {
         // Update
         //----------------------------------------------------------------------------------
         UpdatePlayerPosition(&player1, grid);
-        UpdateBombs(&player1, bombs);
-        UpdateEnemies(enemies, grid, bombs, &player1);
+        UpdateBombs(&player1, bombs, grid);
+        UpdateEnemies(enemies, grid, bombs, &player1, level);
 
         // Draw
         //----------------------------------------------------------------------------------
@@ -389,11 +434,12 @@ int main(void) {
             //Menu();
             if(player1.status){
                 DrawGridCustom(grid);
-                for(int i=0; i<MAX_BOMBS; i++){
+                for(int i=0; i<player1.bombs_max; i++){
                     if(bombs[i].isActive) DrawBomb(bombs[i]);
-                    if(bombs[i].isExploding) HandleExplosions(&player1, grid, bombs, enemies);
+                    if(bombs[i].isExploding) HandleExplosions(&player1, grid, bombs, enemies, level);
                 }
-                for(int i=0; i<MAX_ENEMIES; i++){
+                //AfterExplosions(grid);
+                for(int i=0; i<level.maxEnemies; i++){
                     if(enemies[i].status) DrawEnemy(enemies[i]);
                 }
                 DrawPlayer(player1);
