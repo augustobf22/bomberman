@@ -17,7 +17,7 @@ typedef struct{
 } TILE;
 
 typedef struct{
-    int posX, posY, timer, range;
+    int posX, posY, timer;
     bool isActive, isExploding;
     double lifeTime, explosionTime;
 } BOMB;
@@ -51,12 +51,24 @@ void HandleLevelPass(PLAYER *p, LEVEL *l, ENEMY e[], BOMB b[]){
         e[i].posY = 0;
         e[i].isScored = 0;
     }
+
     //reset bombs
     for(int i = 0; i < p->bombsMax; i++){
         b[i].isActive = 0;
         b[i].isExploding = 0;
         b[i].posX = 0;
         b[i].posY = 0;
+    }
+
+    //save current progress
+    FILE *continueGame;
+
+    if(!(continueGame = fopen("continueGame.bin", "wb"))){
+        printf("Erro ao criar o arquivo!\n");
+    } else {
+        if(fwrite(p, sizeof(PLAYER), 1, continueGame) != 1) printf("Erro na escrita do jogador!\n");
+        if(fwrite(l, sizeof(LEVEL), 1, continueGame) != 1) printf("Erro na escrita do nivel!\n");
+        fclose(continueGame);
     }
 }
 
@@ -83,13 +95,20 @@ void UpdatePlayerPosition(PLAYER *p, TILE grid[][GRID_SIZE], LEVEL l, ENEMY e[])
     if(grid[pX][pY].hasExit){
         //print level won
         //change level
-        p->changeLevel = 1;
+
+        int enemiesDead = 0;
+        for(int i = 0; i < l.maxEnemies; i++){
+            if(e[i].status == 0) enemiesDead++;
+        }
+
+        if(enemiesDead == l.maxEnemies) p->changeLevel = 1;
     }
 
     //check collision with enemy
     for(int i = 0; i < l.maxEnemies; i++){
         if(e[i].posX == p->posX && e[i].posY == p->posY){
             p->status = 0;
+            break;
         }
     }
 
@@ -371,20 +390,108 @@ void DrawGameOver(void){
     DrawText("GAME OVER", posX + 170, posY + 20, 90, WHITE);
 }
 
-void HandleDeath(void){
+void ResetGame(PLAYER *player, BOMB bombs[], ENEMY e[], LEVEL *level){
+    //reset player
+    player->bombRange = 2;
+    player->bombsAvailable = 2;
+    player->bombsMax = 2;
+    player->score = 0;
+    player->changeLevel = 0;
+    player->status = 1;
+    player->posX = TILE_SIZE;
+    player->posY = TILE_SIZE;
+
+    //reset level
+    level->number = 1;
+    level->maxEnemies = 3;
+    level->enemySpeed = 2;
+    level->maxWalls = 5;
+
+    //reset bombs
+    for(int i = 0; i < player->bombsMax; i++){
+        bombs[i].posX = 0;
+        bombs[i].posY = 0;
+        bombs[i].isActive = 0;
+        bombs[i].isExploding = 0;
+        bombs[i].lifeTime = 0;
+        bombs[i].explosionTime = 0;
+    }
+
+    //reset enemies
+    for(int i = 0; i < level->maxEnemies; i++){
+        e[i].isStarted = 0;
+    }
+}
+
+void HandleDeath(int *choice, PLAYER *p, BOMB b[], ENEMY e[], LEVEL *l){
     DrawGameOver();
 
     //save high score
     //go back to menu
+    if(IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_ESCAPE)){
+        ResetGame(p, b, e, l);
+        *choice = 0;
+    }
 }
 
-void Menu(int *choice){
+void UpdateMenu(int *choice, int *selected, PLAYER *p, BOMB b[], ENEMY e[], LEVEL *l){
+    if(IsKeyPressed(KEY_DOWN)){
+        if(*selected == 4){
+            (*selected) = 1;
+        } else {
+            (*selected)++;
+        }
+    }
+
+    if(IsKeyPressed(KEY_UP)){
+        if(*selected == 1){
+            (*selected) = 4;
+        } else {
+            (*selected)--;
+        }
+    }
+
+    if(IsKeyPressed(KEY_ENTER)) {
+        //ResetGame(p, b, e, l);
+        *choice = *selected;
+    }
+}
+
+void Menu(int *selected){
     //Font
 /*    Font fontMecha = LoadFont("mecha.png");
     DrawTextEx(fontMecha, "Jogar", (Vector2){100, 100}, 100, 1, BLACK);
 */
+    int width = GRID_SIZE * TILE_SIZE - 150;
+    int height = 150;
 
     ClearBackground(RAYWHITE);
+ /*       Image background = LoadImageFromScreen();
+        ImageFormat(&background, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+        ImageBlurGaussian(&background, 5);
+        Texture2D texture = LoadTextureFromImage(background);
+        //Color *pixels = LoadImageColors(background);    // Load pixel data from image (RGBA 32bit)
+        //UpdateTexture(texture, pixels);             // Update texture with new image data
+        //UnloadImageColors(pixels);                  // Unload pixels data from RAM
+        DrawTexture(texture, 0, 0, WHITE);
+*/
+
+    //make logic to see whether theres a file to continue
+    switch(*selected){
+        case 1:
+            DrawRectangle(75, 75, width, height, LIGHTGRAY);
+            break;
+        case 2:
+            DrawRectangle(75, 275, width, height, LIGHTGRAY);
+            break;
+        case 3:
+            DrawRectangle(75, 475, width, height, LIGHTGRAY);
+            break;
+        case 4:
+            DrawRectangle(75, 675, width, height, LIGHTGRAY);
+            break;
+    }
+
     DrawText("Jogar", 100, 100, 100, BLACK);
     DrawText("Continuar", 100, 300, 100, BLACK);
     DrawText("Carregar", 100, 500, 100, BLACK);
@@ -487,6 +594,61 @@ void DrawInterface(PLAYER p, LEVEL l){
     DrawText(info, posX + 30, posY + 10, 30, BLACK);
 }
 
+void StartGame(PLAYER *player, TILE grid[][GRID_SIZE], LEVEL level, BOMB bombs[], ENEMY enemies[], int *choice){
+    if(player->status){
+        DrawGridCustom(grid);
+        DrawInterface(*player, level);
+        for(int i=0; i<player->bombsMax; i++){
+            if(bombs[i].isActive) DrawBomb(bombs[i]);
+            if(bombs[i].isExploding) HandleExplosions(player, grid, bombs, enemies, level);
+        }
+        for(int i=0; i<level.maxEnemies; i++){
+            if(enemies[i].status) DrawEnemy(enemies[i]);
+        }
+        DrawPlayer(*player);
+        if(player->changeLevel){
+            DrawLevelPass();
+        }
+    } else HandleDeath(choice, player, bombs, enemies, &level);
+}
+
+void ContinueGame(PLAYER *player, LEVEL *level, int *hasContinued){
+    FILE *continueGame;
+    PLAYER p1;
+    LEVEL l;
+
+    if(!(continueGame = fopen("continueGame.bin","rb"))) // abre para leitura, posiciona no início
+        printf("Erro na abertura\n");
+    else  // listagem sequencial
+    {
+        while(!feof(continueGame))  // enquanto não chegou no final
+        {
+            /*testa leitura, para não considerar a tentativa no final*/
+            if(fread(&p1, sizeof(PLAYER), 1,continueGame) == 1)
+            {
+                player->bombRange = p1.bombRange;
+                player->bombsAvailable = p1.bombsAvailable;
+                player->bombsMax = p1.bombsMax;
+                player->score = p1.score;
+                player->changeLevel = 0;
+                player->status = 1;
+                player->posX = TILE_SIZE;
+                player->posY = TILE_SIZE;
+            }
+            if(fread(&l, sizeof(LEVEL), 1,continueGame) == 1)
+            {
+                level->enemySpeed = l.enemySpeed;
+                level->maxEnemies = l.maxEnemies;
+                level->maxWalls = l.maxWalls;
+                level->number = l.number;
+            }
+        }
+        fclose(continueGame);
+    }
+
+    *hasContinued = 1;
+}
+
 int main(void) {
     // Initialization
     //--------------------------------------------------------------------------------------
@@ -497,28 +659,40 @@ int main(void) {
 
     SetTargetFPS(60);               // Set our game to run at 60 frames-per-second
     //--------------------------------------------------------------------------------------
-    PLAYER player1 = {TILE_SIZE, TILE_SIZE, 2, 2, 2, 0, 0, 1};
-    LEVEL level = {1, 3, 2, 5};
+
+    int choice = 0;
+    int selected = 1;
+    int hasContinued = 0;
+    LEVEL level = {0};
     TILE grid[GRID_SIZE][GRID_SIZE];
-    MakeGrid(grid);
-    GenerateWallsAndPowerUp(grid, level);
     BOMB bombs[MAX_BOMBS] = {0};
     ENEMY enemies[MAX_ENEMIES] = {0};
+    PLAYER player1;
+
+    //create game? reset -> check if has continue, then update player and level -> create grid
+    ResetGame(&player1, bombs, enemies, &level);
+    MakeGrid(grid);
+    GenerateWallsAndPowerUp(grid, level);
 
     // Main game loop
     while (!WindowShouldClose())    // Detect window close button or ESC key
     {
         // Update
         //----------------------------------------------------------------------------------
-        if(!player1.changeLevel && player1.status){
-            UpdatePlayerPosition(&player1, grid, level, enemies);
-            UpdateBombs(&player1, bombs, grid, level, enemies);
-            UpdateEnemies(enemies, grid, bombs, &player1, level);
-        } else{
-            if(IsKeyPressed(KEY_ENTER)){
-                HandleLevelPass(&player1, &level, enemies, bombs);
-                MakeGrid(grid);
-                GenerateWallsAndPowerUp(grid, level);
+        if(choice == 0){
+            UpdateMenu(&choice, &selected, &player1, bombs, enemies, &level);
+        } else if(player1.status){
+            if(!player1.changeLevel){
+                UpdatePlayerPosition(&player1, grid, level, enemies);
+                UpdateBombs(&player1, bombs, grid, level, enemies);
+                UpdateEnemies(enemies, grid, bombs, &player1, level);
+            }
+            else {
+                if(IsKeyPressed(KEY_ENTER)){
+                    HandleLevelPass(&player1, &level, enemies, bombs);
+                    MakeGrid(grid);
+                    GenerateWallsAndPowerUp(grid, level);
+                }
             }
         }
 
@@ -526,22 +700,23 @@ int main(void) {
         //----------------------------------------------------------------------------------
         BeginDrawing();
 
-            //Menu();
-            if(player1.status){
-                DrawGridCustom(grid);
-                DrawInterface(player1, level);
-                for(int i=0; i<player1.bombsMax; i++){
-                    if(bombs[i].isActive) DrawBomb(bombs[i]);
-                    if(bombs[i].isExploding) HandleExplosions(&player1, grid, bombs, enemies, level);
-                }
-                for(int i=0; i<level.maxEnemies; i++){
-                    if(enemies[i].status) DrawEnemy(enemies[i]);
-                }
-                DrawPlayer(player1);
-                if(player1.changeLevel){
-                    DrawLevelPass();
-                }
-            } else HandleDeath();
+            switch (choice){
+                case 0:
+                    //DrawGridCustom(grid);
+                    Menu(&selected);
+                    break;
+                case 1:
+                    StartGame(&player1, grid, level, bombs, enemies, &choice);
+                    break;
+                case 2:
+                    if(!hasContinued) ContinueGame(&player1, &level, &hasContinued);
+                    StartGame(&player1, grid, level, bombs, enemies, &choice);
+                    break;
+                case 3:
+                case 4:
+                    CloseWindow();
+                    break;
+            }
 
         EndDrawing();
         //----------------------------------------------------------------------------------
