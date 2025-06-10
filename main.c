@@ -33,7 +33,17 @@ typedef struct{
     int maxEnemies;
     int enemySpeed;
     int maxWalls;
+    bool hasStarted;
 } LEVEL;
+
+typedef struct{
+    PLAYER player;
+    LEVEL level;
+    TILE grid;
+    BOMB bombs;
+    ENEMY enemies;
+    int hasContinued;
+} GAME;
 
 void HandleLevelPass(PLAYER *p, LEVEL *l, ENEMY e[], BOMB b[]){
     p->changeLevel = 0;
@@ -43,6 +53,8 @@ void HandleLevelPass(PLAYER *p, LEVEL *l, ENEMY e[], BOMB b[]){
     l->enemySpeed++;
     l->maxEnemies++;
     l->maxWalls++;
+    l->hasStarted = 0;
+
     //reset all enemies
     for(int i = 0; i < l->maxEnemies; i++){
         e[i].isStarted = 0;
@@ -406,6 +418,7 @@ void ResetGame(PLAYER *player, BOMB bombs[], ENEMY e[], LEVEL *level){
     level->maxEnemies = 3;
     level->enemySpeed = 2;
     level->maxWalls = 5;
+    level->hasStarted = 0;
 
     //reset bombs
     for(int i = 0; i < player->bombsMax; i++){
@@ -420,6 +433,7 @@ void ResetGame(PLAYER *player, BOMB bombs[], ENEMY e[], LEVEL *level){
     //reset enemies
     for(int i = 0; i < level->maxEnemies; i++){
         e[i].isStarted = 0;
+        e[i].status = 0;
     }
 }
 
@@ -594,22 +608,28 @@ void DrawInterface(PLAYER p, LEVEL l){
     DrawText(info, posX + 30, posY + 10, 30, BLACK);
 }
 
-void StartGame(PLAYER *player, TILE grid[][GRID_SIZE], LEVEL level, BOMB bombs[], ENEMY enemies[], int *choice){
+void StartGame(PLAYER *player, TILE grid[][GRID_SIZE], LEVEL *level, BOMB bombs[], ENEMY enemies[], int *choice){
+    if(level->hasStarted == 0){
+        MakeGrid(grid);
+        GenerateWallsAndPowerUp(grid, *level);
+        level->hasStarted = 1;
+    }
+
     if(player->status){
         DrawGridCustom(grid);
-        DrawInterface(*player, level);
+        DrawInterface(*player, *level);
         for(int i=0; i<player->bombsMax; i++){
             if(bombs[i].isActive) DrawBomb(bombs[i]);
-            if(bombs[i].isExploding) HandleExplosions(player, grid, bombs, enemies, level);
+            if(bombs[i].isExploding) HandleExplosions(player, grid, bombs, enemies, *level);
         }
-        for(int i=0; i<level.maxEnemies; i++){
+        for(int i=0; i<level->maxEnemies; i++){
             if(enemies[i].status) DrawEnemy(enemies[i]);
         }
         DrawPlayer(*player);
         if(player->changeLevel){
             DrawLevelPass();
         }
-    } else HandleDeath(choice, player, bombs, enemies, &level);
+    } else HandleDeath(choice, player, bombs, enemies, level);
 }
 
 void ContinueGame(PLAYER *player, LEVEL *level, int *hasContinued){
@@ -641,6 +661,7 @@ void ContinueGame(PLAYER *player, LEVEL *level, int *hasContinued){
                 level->maxEnemies = l.maxEnemies;
                 level->maxWalls = l.maxWalls;
                 level->number = l.number;
+                level->hasStarted = 1;
             }
         }
         fclose(continueGame);
@@ -671,8 +692,6 @@ int main(void) {
 
     //create game? reset -> check if has continue, then update player and level -> create grid
     ResetGame(&player1, bombs, enemies, &level);
-    MakeGrid(grid);
-    GenerateWallsAndPowerUp(grid, level);
 
     // Main game loop
     while (!WindowShouldClose())    // Detect window close button or ESC key
@@ -706,11 +725,11 @@ int main(void) {
                     Menu(&selected);
                     break;
                 case 1:
-                    StartGame(&player1, grid, level, bombs, enemies, &choice);
+                    StartGame(&player1, grid, &level, bombs, enemies, &choice);
                     break;
                 case 2:
                     if(!hasContinued) ContinueGame(&player1, &level, &hasContinued);
-                    StartGame(&player1, grid, level, bombs, enemies, &choice);
+                    StartGame(&player1, grid, &level, bombs, enemies, &choice);
                     break;
                 case 3:
                 case 4:
